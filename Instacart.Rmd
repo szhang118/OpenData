@@ -1,0 +1,279 @@
+---
+title: "Instacart"
+author: "Steve Zhang"
+date: "April 14, 2018"
+output: html_document
+---
+
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(knitr)
+```
+
+```{r}
+orders = fread("orders.csv")
+products = fread("prods.csv")
+order_products = fread("order_prods.csv")
+aisles = fread("aisles.csv")
+departments = fread("dept.csv")
+```
+
+```{r}
+most_pop = order_products %>%
+          group_by(product_id) %>%
+          summarize(number=n()) %>%
+         top_n(10, wt = number) %>%
+          left_join(select(products, product_id, product_name), by="product_id") %>%
+          arrange(desc(number))
+kable(most_pop)
+```
+```{r}
+order_prod_hour = ((order_products %>%
+                  left_join(select(orders, order_id, order_hour_of_day), by="order_id")) %>%
+                  group_by(product_id, order_hour_of_day) %>%
+                  summarize(count=n())) %>%
+                  inner_join(most_pop, by="product_id")
+```
+
+```{r}
+order_prod_day = ((order_products %>%
+                  left_join(select(orders, order_id, order_dow), by="order_id")) %>%
+                  group_by(product_id, order_dow) %>%
+                  summarize(count=n())) %>%
+                  inner_join(most_pop, by="product_id")
+```
+
+```{r}
+ggplot(data = order_prod_day, aes(x=order_dow, y=count, 
+      colour=product_name)) + geom_line() + xlab("Day of Week") +
+    ylab("Order Count") + ggtitle("Top 10 Products Orders by Day of Week") +
+   scale_color_discrete("Product")
+```
+
+```{r}
+ggplot(data = order_prod_hour, aes(x=order_hour_of_day, y=count, 
+      colour=product_name)) + geom_line() + xlab("Hour of Day") +
+    ylab("Order Count") + ggtitle("Top 10 Products Orders by Hour of Day") +
+   scale_color_discrete("Product")
+```
+
+```{r}
+last_reorder = order_products %>% 
+  left_join(orders, by="order_id") %>%
+  group_by(days_since_prior_order) %>%
+  summarize(avg_reorder = mean(reordered))
+```
+
+```{r}
+ggplot(data = last_reorder, aes(x=days_since_prior_order, y=avg_reorder)) +
+  geom_line() + xlab("Days Since Last Order") + ylab("Average Reordered") +
+  ggtitle("Time of Last Order and Percent Reordered")
+```
+
+Compute average basket size by order number.
+
+```{r}
+basket_size = (orders %>% 
+                 left_join(order_products, by="order_id")) %>%
+              group_by(order_number, order_id) %>%
+              summarize(max_basket=max(add_to_cart_order)) %>%
+              group_by(order_number) %>%
+              summarize(avg_basket=mean(max_basket, na.rm = TRUE))
+head(basket_size)
+```
+
+```{r}
+basket_std = (orders %>% 
+                 left_join(order_products, by="order_id")) %>%
+              group_by(order_number, order_id) %>%
+              summarize(max_basket=max(add_to_cart_order)) %>%
+              group_by(order_number) %>%
+              summarize(stdev_basket=sd(max_basket, na.rm = TRUE))
+head(basket_std)
+```
+
+
+```{r}
+ggplot(basket_size, aes(x=order_number, y=avg_basket)) + geom_point() +
+  geom_smooth() + xlab("Order Number") + ylab("Average Basket Size")
+```
+
+```{r}
+ggplot(basket_std, aes(x=order_number, y=stdev_basket)) + geom_point() +
+  geom_smooth() + xlab("Order Number") + ylab("Basket Size Stdev")
+```
+
+```{r}
+ice_cream = products[str_detect(str_to_lower(products$product_name), "ice cream"), ]
+yogurt = products[str_detect(str_to_lower(products$product_name), "yogurt"), ]
+```
+
+```{r}
+ice_cream_hour =  ((order_products %>%
+                  left_join(select(orders, order_id, order_hour_of_day), by="order_id")) %>%
+                  group_by(product_id, order_hour_of_day) %>%
+                  summarize(count=n())) %>%
+                  inner_join(ice_cream, by="product_id") %>%
+                  group_by(order_hour_of_day) %>%
+                  summarize(count_cream=sum(count))
+head(ice_cream_hour)
+                
+```
+
+```{r}
+yogurt_hour =  ((order_products %>%
+                  left_join(select(orders, order_id, order_hour_of_day), by="order_id")) %>%
+                  group_by(product_id, order_hour_of_day) %>%
+                  summarize(count=n())) %>%
+                  inner_join(yogurt, by="product_id") %>%
+                  group_by(order_hour_of_day) %>%
+                  summarize(count_yogurt=sum(count))
+head(yogurt_hour)
+```
+
+```{r}
+yogurt_cream = ice_cream_hour %>%
+              left_join(yogurt_hour, by="order_hour_of_day")
+yogurt_cream$count_cream = yogurt_cream$count_cream/max(yogurt_cream$count_cream)
+yogurt_cream$count_yogurt = yogurt_cream$count_yogurt/max(yogurt_cream$count_yogurt)
+
+```
+
+```{r}
+ggplot(data=yogurt_cream, aes(x=order_hour_of_day, y=count_cream)) +
+  geom_line(colour="blue") + geom_line(aes(x=order_hour_of_day, y=count_yogurt, colour="red")) +
+  xlab("Hour of Day") + ylab("Popularity of Ordering")
+```
+
+Look at average of days since last order aggregated across order number
+
+```{r}
+avg_days_since = orders %>%
+                filter(order_number > 1) %>%
+                group_by(order_number) %>%
+                summarize(avg_days_since = mean(days_since_prior_order))
+head(avg_days_since)
+```
+
+```{r}
+ggplot(data = avg_days_since, aes(x=order_number, y=avg_days_since)) +
+  geom_line() + xlab("Order Number") + ylab("Average Days Since Last Order") +
+  ggtitle("Average Days Since Last Order vs. Order Number")
+```
+
+Number of orders by order number
+
+```{r}
+orders_by_num = orders %>%
+                group_by(order_number) %>%
+                summarize(count=n())
+orders_by_num$prop = orders_by_num$count/max(orders_by_num$count)                
+head(orders_by_num)
+```
+
+```{r}
+ggplot(orders_by_num, aes(x=order_number, y=prop)) + geom_line() +
+  xlab("Order Number") + ylab("Proportion Reaching")
+```
+
+```{r}
+cust_retain = orders_by_num
+cust_retain$prop[2:100] = cust_retain$prop[2:100] / cust_retain$prop[1:99]
+head(cust_retain)
+```
+
+```{r}
+ggplot(cust_retain, aes(x=order_number, y=prop)) + geom_line() +
+  xlab("Order Number") + ylab("Proportion Continue to Next Order")
+```
+
+
+```{r}
+avg_days_user = orders %>%
+                filter(order_number > 1) %>%
+                group_by(user_id) %>%
+                summarize(avg_days_since = mean(days_since_prior_order),
+                          max_num = max(order_number))
+head(avg_days_user)
+```
+
+```{r}
+ggplot(avg_days_user, aes(avg_days_since)) + geom_histogram(binwidth = 1, fill="tomato3") +
+  xlab("Average Days Since Last Order")
+```
+
+```{r}
+active_users = avg_days_user[avg_days_user$avg_days_since <= 7 & avg_days_user$max_num >= 10,]
+cat("Number of active users:", dim(active_users)[1], "\n")
+```
+
+Barplot of number of orders at given order size
+
+```{r}
+dept_reorder = order_products %>% 
+                group_by(order_id) %>%
+            left_join(products, by = "product_id") %>%
+            left_join(departments, by="department_id") %>%
+            group_by(department) %>%
+            summarize(avg_reorder = mean(reordered))
+head(dept_reorder)
+```
+
+```{r}
+dept_reorder = arrange(dept_reorder, desc(avg_reorder))
+dept_reorder$department = factor(dept_reorder$department, levels=dept_reorder$department)
+head(dept_reorder)
+```
+
+```{r}
+ggplot(dept_reorder, aes(x=department, y=avg_reorder)) + 
+  geom_bar(stat="identity", fill="tomato3") + theme(axis.text.x = element_text(angle=90, vjust=0.6)) +
+  xlab("Department") + ylab("Reorder Proportion")
+```
+
+Add to cart order: reorder ratio.
+
+```{r}
+add_cart_re = order_products %>%
+              group_by(add_to_cart_order) %>%
+              summarize(prop=mean(reordered)) 
+head(add_cart_re)
+```
+
+```{r}
+ggplot(add_cart_re, aes(x=add_to_cart_order, y=prop)) +geom_line()+
+  xlab("Add to Cart Number") + ylab("Reorder Proportion")
+```
+
+Reorder proportion by day of week
+
+```{r}
+day_reo = order_products %>%
+          left_join(orders, by = "order_id") %>%
+          group_by(order_dow) %>%
+          summarize(prop=mean(reordered))
+head(day_reo)
+```
+
+```{r}
+ggplot(data = day_reo, aes(x=order_dow, y=prop)) + geom_bar(stat="identity", fill="tomato3")+
+  xlab("Day of Week") + ylab("Reorder Proportion") + ylim(0.0, 0.7) +
+  ggtitle("Reorder Proportion By Day of Week")
+```
+
+```{r}
+hour_reo = order_products %>%
+          left_join(orders, by = "order_id") %>%
+          group_by(order_hour_of_day) %>%
+          summarize(prop=mean(reordered))
+head(hour_reo)
+```
+
+```{r}
+ggplot(data = hour_reo, aes(x=order_hour_of_day, y=prop)) + geom_bar(stat="identity", fill="green4")+
+  xlab("Hour of Day") + ylab("Reorder Proportion") + ylim(0.0, 0.7) +
+  ggtitle("Reorder Proportion By Hour of Day")
+```
